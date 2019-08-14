@@ -41,7 +41,7 @@ int new_img(const char *buff, const size_t len, const char *save_name);
 int get_img(zimg_req_t *req, evhtp_request_t *request);
 int admin_img(evhtp_request_t *req, thr_arg_t *thr_arg, char *md5, int t);
 int info_img(evhtp_request_t *request, thr_arg_t *thr_arg, char *md5);
-
+int get_full_img(zimg_req_t *req, evhtp_request_t *request);
 
 /**
  * @brief save_img Save buffer from POST requests
@@ -472,5 +472,242 @@ int info_img(evhtp_request_t *request, thr_arg_t *thr_arg, char *md5) {
 err:
     if (im != NULL)
         DestroyMagickWand(im);
+    return result;
+}
+
+/**
+ * @brief get_full_img get full path image from disk mode through the request
+ *
+ * @param req the zimg request
+ * @param request the evhtp request
+ *
+ * @return 1 for OK, 2 for 304 needn't response buffer and -1 for failed
+ */
+int get_full_img(zimg_req_t *req, evhtp_request_t *request)
+{
+    int result = -1;
+    char rsp_cache_key[CACHE_KEY_SIZE];
+    int fd = -1;
+    struct stat f_stat;
+    char *buff = NULL;
+    char *orig_buff = NULL;
+    MagickWand *im = NULL;
+    size_t len = 0;
+    bool to_save = true;
+
+    LOG_PRINT(LOG_DEBUG, "get_full_img() start processing zimg request...");
+
+    if(settings.script_on == 1 && req->type != NULL)
+        snprintf(rsp_cache_key, CACHE_KEY_SIZE, "%s:%s", req->uri, req->type);
+    else
+    {
+        if(req->proportion == 0 && req->width == 0 && req->height == 0)
+            str_lcpy(rsp_cache_key, req->uri, CACHE_KEY_SIZE);
+        else
+            gen_key(rsp_cache_key, req->uri, 9, req->width, req->height, req->proportion, req->gray, req->x, req->y, req->rotate, req->quality, req->fmt);
+    }
+
+    if(find_cache_bin(req->thr_arg, rsp_cache_key, &buff, &len) == 1)
+    {
+        LOG_PRINT(LOG_DEBUG, "Hit Cache[Key: %s].", rsp_cache_key);
+        to_save = false;
+        goto done;
+    }
+    LOG_PRINT(LOG_DEBUG, "Start to Find the Image...");
+
+    char orig_path[512];
+    snprintf(orig_path, 512, "%s/%s", settings.img_path, req->uri);
+    LOG_PRINT(LOG_DEBUG, "0rig File Path: %s", orig_path);
+
+    if(is_file(orig_path) == -1)
+    {
+        LOG_PRINT(LOG_DEBUG, "Image %s is not existed!", req->uri);
+        goto err;
+    }
+
+    char rsp_path[512];
+    if(settings.script_on == 1 && req->type != NULL)
+        snprintf(rsp_path, 512, "%s_t_%s", orig_path, req->type);
+    else
+    {
+        char name[128];
+        snprintf(name, 128, "%d*%d_p%d_g%d_%d*%d_r%d_q%d.%s", req->width, req->height,
+                req->proportion,
+                req->gray,
+                req->x, req->y,
+                req->rotate,
+                req->quality,
+                req->fmt);
+
+        if(req->width == 0 && req->height == 0 && req->proportion == 0)
+        {
+            LOG_PRINT(LOG_DEBUG, "Return original image.");
+            strncpy(rsp_path, orig_path, 512);
+        }
+        else
+        {
+            snprintf(rsp_path, 512, "%s_%s", orig_path, name);
+        }
+    }
+    LOG_PRINT(LOG_DEBUG, "Got the rsp_path: %s", rsp_path);
+
+    if((fd = open(rsp_path, O_RDONLY)) == -1)
+    {
+        im = NewMagickWand();
+        if (im == NULL) goto err;
+
+        int ret;
+        if(find_cache_bin(req->thr_arg, req->uri, &orig_buff, &len) == 1)
+        {
+            LOG_PRINT(LOG_DEBUG, "Hit Orignal Image Cache[Key: %s].", req->uri);
+
+            ret = MagickReadImageBlob(im, (const unsigned char *)orig_buff, len);
+            if (ret != MagickTrue)
+            {
+                LOG_PRINT(LOG_DEBUG, "Open Original Image From Blob Failed! Begin to Open it From Disk.");
+                del_cache(req->thr_arg, req->uri);
+                ret = MagickReadImage(im, orig_path);
+                if (ret != MagickTrue)
+                {
+                    LOG_PRINT(LOG_DEBUG, "Open Original Image From Disk Failed!");
+                    goto err;
+                }
+                else
+                {
+                    MagickSizeType size;
+                    MagickGetImageLength(im, &size);
+                    LOG_PRINT(LOG_DEBUG, "image size = %d", size);
+                    if(size < CACHE_MAX_SIZE)
+                    {
+                        MagickResetIterator(im);
+                        char *new_buff = (char *)MagickGetImageBlob(im, &len);
+                        if (new_buff == NULL) {
+                            LOG_PRINT(LOG_DEBUG, "Webimg Get Original Blob Failed!");
+                            goto err;
+                        }
+                        set_cache_bin(req->thr_arg, req->uri, new_buff, len);
+                        free(new_buff);
+                    }
+                }
+            }
+        }
+        else
+        {
+            LOG_PRINT(LOG_DEBUG, "Not Hit Original Image Cache. Begin to Open it.");
+            ret = MagickReadImage(im, orig_path);
+            if (ret != MagickTrue)
+            {
+                LOG_PRINT(LOG_DEBUG, "Open Original Image From Disk Failed! %d != %d", ret, MagickTrue);
+                LOG_PRINT(LOG_DEBUG, "Open Original Image From Disk Failed!");
+                goto err;
+            }
+            else
+            {
+                MagickSizeType size;
+                MagickGetImageLength(im, &size);
+                LOG_PRINT(LOG_DEBUG, "image size = %d", size);
+                if(size < CACHE_MAX_SIZE)
+                {
+                    MagickResetIterator(im);
+                    char *new_buff = (char *)MagickGetImageBlob(im, &len);
+                    if (new_buff == NULL) {
+                        LOG_PRINT(LOG_DEBUG, "Webimg Get Original Blob Failed!");
+                        goto err;
+                    }
+                    set_cache_bin(req->thr_arg, req->uri, new_buff, len);
+                    free(new_buff);
+                }
+            }
+        }
+
+        if(settings.script_on == 1 && req->type != NULL)
+            ret = lua_convert(im, req);
+        else
+            ret = convert(im, req);
+        if(ret == -1) goto err;
+        if(ret == 0) to_save = false;
+
+        buff = (char *)MagickGetImageBlob(im, &len);
+        if (buff == NULL) {
+            LOG_PRINT(LOG_DEBUG, "Webimg Get Blob Failed!");
+            goto err;
+        }
+    }
+    else
+    {
+        to_save = false;
+        fstat(fd, &f_stat);
+        size_t rlen = 0;
+        len = f_stat.st_size;
+        if(len <= 0)
+        {
+            LOG_PRINT(LOG_DEBUG, "File[%s] is Empty.", rsp_path);
+            goto err;
+        }
+        if((buff = (char *)malloc(len)) == NULL)
+        {
+            LOG_PRINT(LOG_DEBUG, "buff Malloc Failed!");
+            goto err;
+        }
+        LOG_PRINT(LOG_DEBUG, "img_size = %d", len);
+        if((rlen = read(fd, buff, len)) == -1)
+        {
+            LOG_PRINT(LOG_DEBUG, "File[%s] Read Failed: %s", rsp_path, strerror(errno));
+            goto err;
+        }
+        else if(rlen < len)
+        {
+            LOG_PRINT(LOG_DEBUG, "File[%s] Read Not Compeletly.", rsp_path);
+            goto err;
+        }
+    }
+
+    //LOG_PRINT(LOG_INFO, "New Image[%s]", rsp_path);
+    int save_new = 0;
+    if(to_save == true)
+    {
+        if(req->sv == 1 || settings.save_new == 1 || (settings.save_new == 2 && req->type != NULL))
+        {
+            save_new = 1;
+        }
+    }
+
+    if(save_new == 1)
+    {
+        LOG_PRINT(LOG_DEBUG, "Image[%s] is Not Existed. Begin to Save it.", rsp_path);
+        if(new_img(buff, len, rsp_path) == -1)
+        {
+            LOG_PRINT(LOG_DEBUG, "New Image[%s] Save Failed!", rsp_path);
+            LOG_PRINT(LOG_WARNING, "fail save %s", rsp_path);
+        }
+    }
+    else
+        LOG_PRINT(LOG_DEBUG, "Image [%s] Needn't to Storage.", rsp_path);
+
+    if(len < CACHE_MAX_SIZE)
+    {
+        set_cache_bin(req->thr_arg, rsp_cache_key, buff, len);
+    }
+
+done:
+    if(settings.etag == 1)
+    {
+        result = zimg_etag_set(request, buff, len);
+        if(result == 2)
+            goto err;
+    }
+    result = evbuffer_add(request->buffer_out, buff, len);
+    if(result != -1)
+    {
+        result = 1;
+    }
+
+err:
+    if(fd != -1)
+        close(fd);
+    if(im != NULL)
+        DestroyMagickWand(im);
+    free(buff);
+    free(orig_buff);
     return result;
 }

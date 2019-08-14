@@ -32,6 +32,7 @@
 #define INADDR_NONE  ((unsigned int) -1)
 #endif
 
+// typedef unsigned int uint;
 typedef struct zimg_rules_s zimg_rules_t;
 
 typedef struct {

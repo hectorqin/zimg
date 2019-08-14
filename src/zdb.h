@@ -38,5 +38,6 @@ int exist_ssdb(redisContext* c, const char *cache_key);
 int del_db(thr_arg_t *thr_arg, const char *cache_key);
 int del_beansdb(memcached_st *memc, const char *key);
 int del_ssdb(redisContext* c, const char *cache_key);
+int get_full_img_mode_db(zimg_req_t *req, evhtp_request_t *request);
 
 #endif

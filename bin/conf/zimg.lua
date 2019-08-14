@@ -2,7 +2,7 @@
 
 --server config
 --是否后台运行
-is_daemon       = 1
+is_daemon       = 0
 --绑定IP
 ip              = '0.0.0.0'
 --端口
@@ -33,7 +33,7 @@ admin_rule      = 'allow 127.0.0.1'
 
 --cache config
 --是否启用memcached缓存
-cache           = 1
+cache           = 0
 --缓存服务器IP
 mc_ip           = '127.0.0.1'
 --缓存服务器端口
@@ -52,9 +52,9 @@ LOG_INFO 6      Information
 LOG_DEBUG 7     DEBUG message
 ]]
 --输出log级别
-log_level       = 6
+log_level       = 7
 --输出log路径
-log_name        = pwd .. '/log/zimg.log'
+log_name        = ''
 
 --htdoc config
 --默认主页html文件路径
@@ -109,6 +109,9 @@ beansdb_port    = 7900
 ssdb_ip         = '127.0.0.1'
 --SSDB服务器端口
 ssdb_port       = 8888
+
+--support full path img
+enable_full_path = 1
 
 --lua conf functions
 --部分与配置有关的函数在lua中实现，对性能影响不大

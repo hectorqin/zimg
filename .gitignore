@@ -43,3 +43,5 @@ deps/libjpeg-turbo/
 deps/libwebp/
 deps/ImageMagick/
 deps/LuaJIT/
+
+/.vscode

@@ -44,7 +44,7 @@ int exist_ssdb(redisContext* c, const char *cache_key);
 int del_db(thr_arg_t *thr_arg, const char *cache_key);
 int del_beansdb(memcached_st *memc, const char *key);
 int del_ssdb(redisContext* c, const char *cache_key);
-
+int get_full_img_mode_db(zimg_req_t *req, evhtp_request_t *request);
 
 /**
  * @brief get_img_mode_db get image from nosql db mode
@@ -616,3 +616,133 @@ int del_ssdb(redisContext* c, const char *cache_key) {
     return rst;
 }
 
+/**
+ * @brief get_full_img_mode_db get full path image from nosql db mode
+ *
+ * @param req the zimg request
+ * @param request the evhtp request
+ *
+ * @return 1 for OK, 2 for 304 not modify and -1 for failed
+ */
+int get_full_img_mode_db(zimg_req_t *req, evhtp_request_t *request)
+{
+    int result = -1;
+    char rsp_cache_key[CACHE_KEY_SIZE];
+    char *buff = NULL;
+    char *orig_buff = NULL;
+    size_t img_size;
+    MagickWand *im = NULL;
+    bool to_save = true;
+
+    LOG_PRINT(LOG_DEBUG, "get_img() start processing zimg request...");
+
+    if(exist_db(req->thr_arg, req->uri) == -1)
+    {
+        LOG_PRINT(LOG_DEBUG, "Image [%s] is not existed.", req->uri);
+        goto err;
+    }
+
+    if(settings.script_on == 1 && req->type != NULL)
+        snprintf(rsp_cache_key, CACHE_KEY_SIZE, "%s:%s", req->uri, req->type);
+    else
+    {
+        if(req->proportion == 0 && req->width == 0 && req->height == 0)
+            str_lcpy(rsp_cache_key, req->uri, CACHE_KEY_SIZE);
+        else
+            gen_key(rsp_cache_key, req->uri, 9, req->width, req->height, req->proportion, req->gray, req->x, req->y, req->rotate, req->quality, req->fmt);
+    }
+
+    if(find_cache_bin(req->thr_arg, rsp_cache_key, &buff, &img_size) == 1)
+    {
+        LOG_PRINT(LOG_DEBUG, "Hit Cache[Key: %s].", rsp_cache_key);
+        to_save = false;
+        goto done;
+    }
+    LOG_PRINT(LOG_DEBUG, "Start to Find the Image...");
+    if(get_img_db(req->thr_arg, rsp_cache_key, &buff, &img_size) == 1)
+    {
+        LOG_PRINT(LOG_DEBUG, "Get image [%s] from backend db succ.", rsp_cache_key);
+        if(img_size < CACHE_MAX_SIZE)
+        {
+            set_cache_bin(req->thr_arg, rsp_cache_key, buff, img_size);
+        }
+        to_save = false;
+        goto done;
+    }
+
+    im = NewMagickWand();
+    if (im == NULL) goto err;
+
+    if(find_cache_bin(req->thr_arg, req->uri, &orig_buff, &img_size) == -1)
+    {
+        if(get_img_db(req->thr_arg, req->uri, &orig_buff, &img_size) == -1)
+        {
+            LOG_PRINT(LOG_DEBUG, "Get image [%s] from backend db failed.", req->uri);
+            goto err;
+        }
+        else if(img_size < CACHE_MAX_SIZE)
+        {
+            set_cache_bin(req->thr_arg, req->uri, orig_buff, img_size);
+        }
+    }
+
+    result = MagickReadImageBlob(im, (const unsigned char *)orig_buff, img_size);
+    if (result != MagickTrue)
+    {
+        LOG_PRINT(LOG_DEBUG, "Webimg Read Blob Failed!");
+        goto err;
+    }
+    if(settings.script_on == 1 && req->type != NULL)
+        result = lua_convert(im, req);
+    else
+        result = convert(im, req);
+    if(result == -1) goto err;
+    if(result == 0) to_save = false;
+
+    buff = (char *)MagickGetImageBlob(im, &img_size);
+    if (buff == NULL) {
+        LOG_PRINT(LOG_DEBUG, "Webimg Get Blob Failed!");
+        goto err;
+    }
+
+    if(img_size < CACHE_MAX_SIZE)
+    {
+        set_cache_bin(req->thr_arg, rsp_cache_key, buff, img_size);
+    }
+
+done:
+    if(settings.etag == 1)
+    {
+        result = zimg_etag_set(request, buff, img_size);
+        if(result == 2)
+            goto err;
+    }
+    result = evbuffer_add(request->buffer_out, buff, img_size);
+    if(result != -1)
+    {
+        int save_new = 0;
+        if(to_save == true)
+        {
+            if(req->sv == 1 || settings.save_new == 1 || (settings.save_new == 2 && req->type != NULL))
+            {
+                save_new = 1;
+            }
+        }
+
+        if(save_new == 1)
+        {
+            LOG_PRINT(LOG_DEBUG, "Image [%s] Saved to Storage.", rsp_cache_key);
+            save_img_db(req->thr_arg, rsp_cache_key, buff, img_size);
+        }
+        else
+            LOG_PRINT(LOG_DEBUG, "Image [%s] Needn't to Storage.", rsp_cache_key);
+        result = 1;
+    }
+
+err:
+    if(im != NULL)
+        DestroyMagickWand(im);
+    free(buff);
+    free(orig_buff);
+    return result;
+}

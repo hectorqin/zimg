@@ -772,8 +772,9 @@ done:
 void get_request_cb(evhtp_request_t *req, void *arg) {
     char *md5 = NULL, *fmt = NULL, *type = NULL;
     zimg_req_t *zimg_req = NULL;
-    char *buff = NULL;
-    size_t len;
+	char *buff = NULL;
+	size_t len;
+    int is_full_path = 0;
 
     evhtp_connection_t *ev_conn = evhtp_request_get_connection(req);
     struct sockaddr *saddr = ev_conn->saddr;
@@ -875,11 +876,18 @@ void get_request_cb(evhtp_request_t *req, void *arg) {
         str_lcpy(md5, uri + 1, md5_len);
     else
         str_lcpy(md5, uri, md5_len);
-    LOG_PRINT(LOG_DEBUG, "md5 of request is <%s>",  md5);
+	LOG_PRINT(LOG_DEBUG, "md5 of request is <%s>",  md5);
     if (is_md5(md5) == -1) {
-        LOG_PRINT(LOG_DEBUG, "Url is Not a zimg Request.");
-        LOG_PRINT(LOG_INFO, "%s refuse url illegal", address);
-        goto err;
+        // enable full path image  not md5 path,try full path
+        if(settings.enable_full_path == 1) {
+            LOG_PRINT(LOG_DEBUG, "Url is Not a zimg md5 Request.");
+            LOG_PRINT(LOG_INFO, "%s try to parse as a full path", address);
+            is_full_path = 1;
+        } else {
+            LOG_PRINT(LOG_DEBUG, "Url is Not a zimg Request.");
+            LOG_PRINT(LOG_INFO, "%s refuse url illegal", address);
+            goto err;
+        }
     }
     /* This holds the content we're sending. */
 
@@ -971,9 +979,14 @@ void get_request_cb(evhtp_request_t *req, void *arg) {
     zimg_req -> fmt = (fmt != NULL ? fmt : settings.format);
     zimg_req -> sv = sv;
     zimg_req -> thr_arg = thr_arg;
+    zimg_req -> uri = md5;
 
     int get_img_rst = -1;
-    get_img_rst = settings.get_img(zimg_req, req);
+    if(is_full_path ==1 ){
+        get_img_rst = settings.get_full_img(zimg_req, req);
+    }else{
+        get_img_rst = settings.get_img(zimg_req, req);
+    }
 
     if (get_img_rst == -1) {
         LOG_PRINT(LOG_DEBUG, "zimg Requset Get Image[MD5: %s] Failed!", zimg_req->md5);

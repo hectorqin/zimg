@@ -141,6 +141,10 @@ static void settings_init(void) {
     settings.get_img = NULL;
     settings.info_img = NULL;
     settings.admin_img = NULL;
+    //support full path img
+    settings.enable_full_path = 0;
+    settings.get_full_img = NULL;
+    str_lcpy(settings.full_path_regex, "", sizeof(settings.full_path_regex));
 }
 
 static void set_callback(int mode) {
@@ -349,7 +353,20 @@ static int load_conf(const char *conf) {
         settings.ssdb_port = (int)lua_tonumber(L, -1);
     lua_pop(L, 1);
 
-    //settings.L = L;
+    lua_getglobal(L, "enable_full_path");
+    if(lua_isnumber(L, -1))
+        settings.enable_full_path = (int)lua_tonumber(L, -1);
+    lua_pop(L, 1);
+
+    if(settings.enable_full_path) {
+        if(settings.mode == 1) {
+            settings.get_full_img = get_full_img;
+        } else {
+            settings.get_full_img = get_full_img_mode_db;
+        }
+    }
+
+    // settings.L = L;
     lua_close(L);
 
     return 1;

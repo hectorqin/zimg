@@ -65,6 +65,7 @@ typedef struct zimg_req_s {
     char *fmt;
     int sv;
     thr_arg_t *thr_arg;
+    char *uri;
 } zimg_req_t;
 
 struct setting {
@@ -109,6 +110,9 @@ struct setting {
     int (*get_img)(zimg_req_t *, evhtp_request_t *);
     int (*info_img)(evhtp_request_t *, thr_arg_t *, char *);
     int (*admin_img)(evhtp_request_t *, thr_arg_t *, char *, int);
+    int enable_full_path;
+    char full_path_regex[128];
+    int (*get_full_img)(zimg_req_t *, evhtp_request_t *);
 } settings;
 
 #define LOG_FATAL       0           /* System is unusable */
